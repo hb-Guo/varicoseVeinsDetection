@@ -33,19 +33,19 @@ class DataAugmentor:
     
     def random_brightness(self, image):
         """随机亮度调整"""
-        factor = random.uniform(0.7, 1.3)
+        factor = random.uniform(0.8, 1.2)
         enhancer = ImageEnhance.Brightness(image)
         return enhancer.enhance(factor)
     
     def random_contrast(self, image):
         """随机对比度调整"""
-        factor = random.uniform(0.7, 1.3)
+        factor = random.uniform(1.3, 2)
         enhancer = ImageEnhance.Contrast(image)
         return enhancer.enhance(factor)
     
     def random_saturation(self, image):
         """随机饱和度调整"""
-        factor = random.uniform(0.7, 1.3)
+        factor = random.uniform(0.5, 2)
         enhancer = ImageEnhance.Color(image)
         return enhancer.enhance(factor)
     
@@ -138,19 +138,20 @@ class DataAugmentor:
         augmentation_methods = [
             self.random_rotation,
             self.random_flip,
-            self.random_brightness,
-            self.random_contrast,
-            self.random_saturation,
+            # self.random_brightness,
+            # self.random_contrast,
+            # self.random_saturation,
             self.random_sharpness,
-            self.random_blur,
+            # self.random_blur,
             self.random_crop_and_resize,
             self.random_perspective,
             self.random_noise,
-            self.random_elastic_transform,
+            # self.random_elastic_transform,
         ]
         
         # 随机选择增强方法
         num_augmentations = random.randint(3, 6)
+        # num_augmentations = 10
         selected_methods = random.sample(augmentation_methods, num_augmentations)
         
         # 应用增强
@@ -203,18 +204,19 @@ class DataAugmentor:
                 
                 try:
                     # 读取原始图像
-                    image = Image.open(input_path).convert('RGB')
+                    image = Image.open(input_path)
                     
                     # 保存原始图像
                     if keep_original:
                         output_path = os.path.join(class_output_path, 
                                                   f"{base_name}_original{ext}")
-                        image.save(output_path)
+                        image1= image.convert('RGB')
+                        image1.save(output_path)
                         total_original += 1
                     
                     # 生成增强图像
                     for i in range(self.augmentations_per_image):
-                        augmented = self.augment_image(image)
+                        augmented = self.augment_image(image).convert('RGB')
                         output_path = os.path.join(class_output_path, 
                                                   f"{base_name}_aug_{i+1}{ext}")
                         augmented.save(output_path)
@@ -239,9 +241,9 @@ def main():
     使用示例
     """
     # 配置参数
-    input_dir = "./data"  # 原始数据集
-    output_dir = "./data_augmented"  # 扩充后的数据集
-    augmentations_per_image = 20  # 每张图片生成20个变体
+    input_dir = "./avi_data/train_crop"  # 原始数据集
+    output_dir = "./avi_data/train_aug"  # 扩充后的数据集
+    augmentations_per_image = 10  # 每张图片生成20个变体
     
     # 创建增强器
     augmentor = DataAugmentor(augmentations_per_image=augmentations_per_image)

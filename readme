@@ -1,0 +1,26 @@
+## 环境配置 :computer:
+
+```bash
+conda env create -f env.yml
+```
+
+## 数据预处理 :book:
+
+```bash
+python data_pre.py
+```
+
+## 运行 :run:
+
+```bash
+conda activate ic
+torchrun --nproc_per_node=8 train.py
+```
+
+## 测试 :test_tube:
+
+测试数据放在test_data目录下。
+
+```bash
+python test.py
+```

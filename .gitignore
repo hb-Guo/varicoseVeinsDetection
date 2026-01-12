@@ -1,2 +1,8 @@
 data/*
 data_augmented/*
+datasets/*
+test_data/*
+data1/*
+.vscode/*
+.idea/*
+avi_data/*

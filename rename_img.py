@@ -56,7 +56,6 @@ def rename_images(source_dir, target_dir):
 
 if __name__ == "__main__":
     # 设置路径
-    source_directory = "./data_augmented"  # 修改为你的原始数据集路径
-    target_directory = "./data"  # 处理后的数据集路径
-
+    source_directory = "./avi_data/train_aug"  # 修改为你的原始数据集路径
+    target_directory = "./avi_data/train_name"  # 处理后的数据集路径
     rename_images(source_directory, target_directory)
