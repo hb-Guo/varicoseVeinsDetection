@@ -136,8 +136,8 @@ class DataAugmentor:
         """
         # 随机选择3-5种增强方法
         augmentation_methods = [
-            self.random_rotation,
-            self.random_flip,
+            # self.random_rotation,
+            # self.random_flip,
             # self.random_brightness,
             # self.random_contrast,
             # self.random_saturation,
@@ -150,7 +150,7 @@ class DataAugmentor:
         ]
         
         # 随机选择增强方法
-        num_augmentations = random.randint(3, 6)
+        num_augmentations = random.randint(2, 4)
         # num_augmentations = 10
         selected_methods = random.sample(augmentation_methods, num_augmentations)
         
@@ -183,6 +183,18 @@ class DataAugmentor:
         total_generated = 0
         
         for class_name in class_names:
+            if class_name=="C1":
+                self.augmentations_per_image = 3
+            elif class_name=="C2":
+                self.augmentations_per_image = 0
+            elif class_name=="C3":
+                self.augmentations_per_image = 4
+            elif class_name=="C4":
+                self.augmentations_per_image = 1
+            elif class_name=="C5":
+                self.augmentations_per_image = 3
+            elif class_name=="C6":
+                self.augmentations_per_image = 4
             class_input_path = os.path.join(input_dir, class_name)
             class_output_path = os.path.join(output_dir, class_name)
             
@@ -241,8 +253,8 @@ def main():
     使用示例
     """
     # 配置参数
-    input_dir = "./avi_data/train_crop"  # 原始数据集
-    output_dir = "./avi_data/train_aug"  # 扩充后的数据集
+    input_dir = "./avi_data/train_name"  # 原始数据集
+    output_dir = "./avi_data/train"  # 扩充后的数据集
     augmentations_per_image = 10  # 每张图片生成20个变体
     
     # 创建增强器

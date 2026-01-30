@@ -59,10 +59,26 @@ def load_data(data_dir):
             for img_name in os.listdir(class_path):
                 if img_name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
                     image_paths.append(os.path.join(class_path, img_name))
+                    w, h = Image.open(image_paths[-1]).size
+                    if w < 512 or h < 512:
+                        image_paths.pop()
+                        continue
                     labels.append(class_to_idx[class_name])
 
     return image_paths, labels, class_names
 
+from timm.data import Mixup
+
+# 配置 Mixup 和 Cutmix
+mixup_fn = Mixup(
+        mixup_alpha=0.2,       # Mixup 强度（建议 0.8）
+        cutmix_alpha=1.0,      # Cutmix 强度（建议 1.0）
+        prob=0.5,              # 每次 batch 有多少概率触发 Mixup/Cutmix
+        switch_prob=0.5,       # 在 Mixup 和 Cutmix 之间切换的概率
+        mode='batch',          # 以 batch 为单位进行变换
+        label_smoothing=0.1,   # 标签平滑
+        num_classes=6          # 你的分类数
+)
 
 def train_model(
     model,
@@ -94,6 +110,7 @@ def train_model(
             images, labels = images.to(device), labels.to(device)
 
             optimizer.zero_grad()
+            # samples, targets = mixup_fn(images, labels)
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
@@ -152,7 +169,7 @@ def train_model(
             best_acc = val_acc
             if dist.get_rank() == 0:
                 print("最佳模型已更新，保存中...")
-                torch.save(model.module.state_dict(), "new_resnet50_ddp.pth")
+                torch.save(model.module.state_dict(), "aug1_new_resnet50_ddp.pth")
                 # torch.save(model.state_dict(), save_path)
         # elif val_recall > best_recall:
         #     best_recall = val_recall
@@ -207,14 +224,14 @@ class ResizeWithPad:
 
         pad_w = self.size - new_w
         pad_h = self.size - new_h
-        # img = F.pad(
-        #     img, (pad_w // 2, pad_h // 2, pad_w - pad_w // 2, pad_h - pad_h // 2)
-        # )
         img = TF.pad(
-            img,
-            (pad_w // 2, pad_h // 2, pad_w - pad_w // 2, pad_h - pad_h // 2),
-            fill=tuple(int(x * 255) for x in [0.485, 0.456, 0.406]),
+            img, (pad_w // 2, pad_h // 2, pad_w - pad_w // 2, pad_h - pad_h // 2)
         )
+        # img = TF.pad(
+        #     img,
+        #     (pad_w // 2, pad_h // 2, pad_w - pad_w // 2, pad_h - pad_h // 2),
+        #     fill=tuple(int(x * 255) for x in [0.485, 0.456, 0.406]),
+        # )
         return img
 
 
@@ -445,11 +462,89 @@ class ClassifierWithSE(nn.Module):
         x = self.classifier(x)
         return x
 
+import torch.nn.functional as F
+
+class CosineLinear(nn.Module):
+    def __init__(self, in_features, out_features, s=30.0):
+        super(CosineLinear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.s = s  # 缩放因子，非常重要
+        self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, x):
+        # 1. 对输入特征进行归一化
+        x_norm = F.normalize(x, p=2, dim=1)
+        # 2. 对权重进行归一化
+        w_norm = F.normalize(self.weight, p=2, dim=1)
+        # 3. 计算余弦相似度并缩放
+        # 余弦值范围在 [-1, 1]，如果不乘 s，Softmax 后的概率分布会太“平”，导致不收敛
+        logits = torch.mm(x_norm, w_norm.t())
+        return self.s * logits
+
+class VaricoseNet(nn.Module):
+    def __init__(self, backbone, num_classes=6):
+        super().__init__()
+        self.backbone = backbone            # DINO ViT
+        print(backbone)
+        
+        # self.resnet = resnet34()
+        # state = torch.load("./resnet34-pre.pth", map_location="cpu", weights_only=True)
+        # self.resnet.load_state_dict(state, strict=False)
+        # self.classifier = nn.Sequential(nn.Dropout(p=0.6), nn.Linear(768, 6))# 0.5效果最好
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        
+        for param in self.backbone.blocks[-1].parameters():
+            param.requires_grad = True
+
+        if hasattr(self.backbone, 'norm'):
+            for param in self.backbone.norm.parameters():
+                param.requires_grad = True
+
+        embed_dim = 768
+
+        # self.se_module = SEBlock(embed_dim * 2) 
+
+        self.norm = nn.LayerNorm(embed_dim * 2) 
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(embed_dim * 2, 256),      # 先降维，减少参数
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(p=0.7),                  # 0.5效果好
+            nn.Linear(256, num_classes)
+            # CosineLinear(256, num_classes, s=15) 
+        )
+
+    def forward(self, x):
+
+        features = self.backbone.get_intermediate_layers(x, n=1)[0] 
+        
+        cls_token = features[:, 0]              # [B, 768]
+        patch_tokens = features[:, 1:]          # [B, N, 768]
+        
+        # 2. 全局平均池化 (GAP)
+        gap = torch.mean(patch_tokens, dim=1)   # [B, 768]
+        
+        # 3. 拼接 CLS 和 GAP
+        combined = torch.cat([cls_token, gap], dim=1) # [B, 1536]
+        
+        # 4. 分类
+        combined = self.norm(combined)
+
+        out = self.classifier(combined)
+        return out
+
+device = torch.device("cuda")
+
+
 
 def main():
 
-    train_data_dir = "./avi_data/train_aug"
-    val_data_dir = "./avi_data/val_crop"
+    train_data_dir = "/home/zengwanxin/openworld/vvdata/aug1/"
+    val_data_dir = "./output/val"
     batch_size = 16
     num_epochs = 200
     learning_rate = 0.0001
@@ -460,9 +555,11 @@ def main():
     # device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     print(f"使用设备: {device}")
 
+
+
     transform_train = transforms.Compose(
         [
-            ResizeWithPad(384),
+            ResizeWithPad(512),
             transforms.ToTensor(),
             # transforms.CenterCrop((int(0.8 * 384), int(0.8 * 384))),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
@@ -471,7 +568,7 @@ def main():
 
     transform_val = transforms.Compose(
         [
-            ResizeWithPad(384),
+            ResizeWithPad(512),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ]
@@ -496,58 +593,62 @@ def main():
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=32,
+        batch_size=8,
         sampler=train_sampler,
         num_workers=4,
         pin_memory=True,
+        drop_last=True
     )
 
     val_loader = DataLoader(
-        val_dataset, batch_size=4, sampler=val_sampler, num_workers=4, pin_memory=True
+        val_dataset, batch_size=1, sampler=val_sampler, num_workers=4, pin_memory=True
     )
     # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     # val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    net = resnet34()
-    model_weight_path = "./resnet34-pre.pth"
-    state = torch.load(model_weight_path, map_location="cpu")
-    net.load_state_dict(state, strict=False)
+    # net = resnet34(use_cbam=False)
+    # model_weight_path = "./resnet34-pre.pth"
+    # state = torch.load(model_weight_path, map_location="cpu")
+    # net.load_state_dict(state, strict=False)
     # net.load_state_dict(
     #     torch.load(model_weight_path, map_location="cpu", weights_only=True)
     # )
-    in_channel = net.fc.in_features
+    # in_channel = net.fc.in_features
 
-    dropout_prob = (
-        0.3  # 这是一个常用的强度，如果依然过拟合可以设为 0.5，如果欠拟合设为 0.3
-    )
-    net.fc = nn.Sequential(
-        nn.Dropout(p=dropout_prob), nn.Linear(in_channel, len(train_class_names))
-    )
+    # dropout_prob = (
+    #     0.3  # 这是一个常用的强度，如果依然过拟合可以设为 0.5，如果欠拟合设为 0.3
+    # )
+    # net.fc = nn.Sequential(
+    #     nn.Dropout(p=dropout_prob), nn.Linear(in_channel, len(train_class_names))
+    # )
 
     # net.fc = ClassifierWithSE(
     #     in_channel=in_channel,
     #     num_classes=len(train_class_names),
     #     dropout_prob=dropout_prob,
     # )
-
-    net = net.to(device)
-    net = DDP(net, device_ids=[local_rank], find_unused_parameters=True)
+    net = torch.hub.load("facebookresearch/dino:main", "dino_vitb16")
+    model = VaricoseNet(net, num_classes=6)
+    model = model.to(device)
+    model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
+    print(model)
 
     # loss_function = FocalLoss(
     #     alpha=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], gamma=2  # 按你CEAP各级样本数反比设
     # )
     loss_function = nn.CrossEntropyLoss(label_smoothing=0.1)
-    params = [p for p in net.parameters() if p.requires_grad]
+    params = [p for p in model.parameters() if p.requires_grad]
 
     base_optimizer = torch.optim.AdamW
     # optimizer = SAM(params, base_optimizer, rho=0.05, lr=1e-4, weight_decay=5e-4)
 
-    optimizer = optim.Adam(params, lr=0.0001, weight_decay=1e-4)
+    optimizer = optim.Adam(params, lr=0.001, weight_decay=1e-4)
+
 
     # 训练模型
-    print("开始训练带注意力机制的模型...")
+    print("开始...")
     train_losses, val_losses, train_accs, val_accs = train_model(
-        net,
+        model,
         train_loader,
         val_loader,
         loss_function,
