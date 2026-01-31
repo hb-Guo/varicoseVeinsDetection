@@ -80,6 +80,40 @@ mixup_fn = Mixup(
         num_classes=6          # 你的分类数
 )
 
+def set_seed(seed: int = 42, deterministic: bool = True):
+    import os
+    import random
+    import numpy as np
+    import torch
+
+    # Python & NumPy
+    random.seed(seed)
+    np.random.seed(seed)
+
+    # PyTorch
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    # 环境变量（hash & CUDA）
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+    if deterministic:
+        # cuDNN
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+        # PyTorch >= 1.8
+        torch.use_deterministic_algorithms(True)
+
+        # CUDA 11+
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+
+    else:
+        # 更快，但不可复现
+        torch.backends.cudnn.benchmark = True
+
+
 def train_model(
     model,
     train_loader,
@@ -109,10 +143,20 @@ def train_model(
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
 
+            ordinal_targets = label_to_ordinal(labels)
+
             optimizer.zero_grad()
             # samples, targets = mixup_fn(images, labels)
             outputs = model(images)
-            loss = criterion(outputs, labels)
+            # loss = criterion(outputs, labels)
+
+            weights = torch.tensor([1.0, 1.0, 3.0, 1.0, 1.0]).to(device) # 给中间神经元 3 倍权重
+            # 手动计算 BCE Loss 并加权
+            loss_matrix = F.binary_cross_entropy_with_logits(outputs, ordinal_targets, reduction='none')
+            loss = (loss_matrix * weights).mean()
+
+            # loss = criterion(outputs, ordinal_targets)
+            # print(loss)
             loss.backward()
             optimizer.step()
             # optimizer.first_step(zero_grad=True)
@@ -121,8 +165,14 @@ def train_model(
             # criterion(outputs, labels).backward()
             # optimizer.second_step(zero_grad=True)
 
+            probs = torch.sigmoid(outputs) # 转换为概率
+            # 统计大于 0.5 的个数。例如有 2 个大于 0.5，说明是 C3 (索引为2)
+            predicted = (probs > 0.5).sum(dim=1)
+            # print("predicted: ", predicted.cpu().numpy())
+            # print("label: ", labels.cpu().numpy())
+
             running_loss += loss.item()
-            _, predicted = torch.max(outputs.data, 1)
+            # _, predicted = torch.max(outputs.data, 1)
 
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
@@ -144,11 +194,19 @@ def train_model(
         with torch.no_grad():
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
-                outputs = model(images)
-                loss = criterion(outputs, labels)
 
+                ordinal_targets = label_to_ordinal(labels)
+
+                outputs = model(images)
+                loss = criterion(outputs, ordinal_targets)
+
+                probs = torch.sigmoid(outputs) # 转换为概率
+                # 统计大于 0.5 的个数。例如有 2 个大于 0.5，说明是 C3 (索引为2)
+                predicted = (probs > 0.5).sum(dim=1)
+                # print("predicted: ", predicted.cpu().numpy())
+                # print("label: ", labels.cpu().numpy())
                 val_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
+                # _, predicted = torch.max(outputs.data, 1)
 
                 acc += torch.eq(predicted, labels).sum().item()
                 total += labels.size(0)
@@ -464,6 +522,15 @@ class ClassifierWithSE(nn.Module):
 
 import torch.nn.functional as F
 
+def label_to_ordinal(labels, num_classes=6):
+    # labels: [batch_size]
+    # return: [batch_size, num_classes - 1]
+    batch_size = labels.size(0)
+    ordinal_labels = torch.zeros(batch_size, num_classes - 1).to(labels.device)
+    for i in range(batch_size):
+        ordinal_labels[i, :labels[i]] = 1
+    return ordinal_labels
+
 class CosineLinear(nn.Module):
     def __init__(self, in_features, out_features, s=30.0):
         super(CosineLinear, self).__init__()
@@ -487,15 +554,16 @@ class VaricoseNet(nn.Module):
     def __init__(self, backbone, num_classes=6):
         super().__init__()
         self.backbone = backbone            # DINO ViT
-        print(backbone)
+        # print(backbone)
         
-        # self.resnet = resnet34()
+        # self.backbone = resnet34()
         # state = torch.load("./resnet34-pre.pth", map_location="cpu", weights_only=True)
-        # self.resnet.load_state_dict(state, strict=False)
-        # self.classifier = nn.Sequential(nn.Dropout(p=0.6), nn.Linear(768, 6))# 0.5效果最好
+        # self.backbone.load_state_dict(state, strict=False)
+        # self.classifier = nn.Sequential(nn.Dropout(p=0.6), nn.Linear(1000, 5))# 0.5效果最好
+
         for param in self.backbone.parameters():
             param.requires_grad = False
-        
+
         for param in self.backbone.blocks[-1].parameters():
             param.requires_grad = True
 
@@ -510,29 +578,33 @@ class VaricoseNet(nn.Module):
         self.norm = nn.LayerNorm(embed_dim * 2) 
         
         self.classifier = nn.Sequential(
-            nn.Linear(embed_dim * 2, 256),      # 先降维，减少参数
+            nn.Linear(embed_dim *2, 256)  ,   # 先降维，减少参数
             nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(p=0.7),                  # 0.5效果好
-            nn.Linear(256, num_classes)
-            # CosineLinear(256, num_classes, s=15) 
+            nn.Linear(256, 5)
+            # CosineLinear(256, num_classes, s=15)
         )
 
     def forward(self, x):
 
-        features = self.backbone.get_intermediate_layers(x, n=1)[0] 
+        features = self.backbone.get_intermediate_layers(x, n=1)[0]
         
         cls_token = features[:, 0]              # [B, 768]
         patch_tokens = features[:, 1:]          # [B, N, 768]
-        
+
         # 2. 全局平均池化 (GAP)
         gap = torch.mean(patch_tokens, dim=1)   # [B, 768]
-        
+
         # 3. 拼接 CLS 和 GAP
         combined = torch.cat([cls_token, gap], dim=1) # [B, 1536]
-        
+
         # 4. 分类
         combined = self.norm(combined)
+
+
+
+        # features = self.backbone(x)
 
         out = self.classifier(combined)
         return out
@@ -542,7 +614,7 @@ device = torch.device("cuda")
 
 
 def main():
-
+    set_seed(42,deterministic=True)
     train_data_dir = "/home/zengwanxin/openworld/vvdata/aug1/"
     val_data_dir = "./output/val"
     batch_size = 16
@@ -636,7 +708,11 @@ def main():
     # loss_function = FocalLoss(
     #     alpha=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0], gamma=2  # 按你CEAP各级样本数反比设
     # )
-    loss_function = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # weights = torch.tensor([1.5, 1.0, 2.5, 1.2, 3.0,1.0]).cuda()
+    # loss_function = nn.CrossEntropyLoss(label_smoothing=0.1)
+
+
+    loss_function = nn.BCEWithLogitsLoss()
     params = [p for p in model.parameters() if p.requires_grad]
 
     base_optimizer = torch.optim.AdamW

@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="tf_cpu" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="image_classification" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="ic" project-jdk-type="Python SDK" />
 </project>
