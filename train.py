@@ -71,13 +71,13 @@ from timm.data import Mixup
 
 # 配置 Mixup 和 Cutmix
 mixup_fn = Mixup(
-        mixup_alpha=0.2,       # Mixup 强度（建议 0.8）
-        cutmix_alpha=1.0,      # Cutmix 强度（建议 1.0）
-        prob=0.5,              # 每次 batch 有多少概率触发 Mixup/Cutmix
-        switch_prob=0.5,       # 在 Mixup 和 Cutmix 之间切换的概率
-        mode='batch',          # 以 batch 为单位进行变换
-        label_smoothing=0.1,   # 标签平滑
-        num_classes=6          # 你的分类数
+    mixup_alpha=0.2,       # Mixup 强度（建议 0.8）
+    cutmix_alpha=1.0,      # Cutmix 强度（建议 1.0）
+    prob=0.5,              # 每次 batch 有多少概率触发 Mixup/Cutmix
+    switch_prob=0.5,       # 在 Mixup 和 Cutmix 之间切换的概率
+    mode='batch',          # 以 batch 为单位进行变换
+    label_smoothing=0.1,   # 标签平滑
+    num_classes=6          # 你的分类数
 )
 
 def set_seed(seed: int = 42, deterministic: bool = True):
@@ -115,14 +115,14 @@ def set_seed(seed: int = 42, deterministic: bool = True):
 
 
 def train_model(
-    model,
-    train_loader,
-    val_loader,
-    criterion,
-    optimizer,
-    num_epochs,
-    device,
-    train_sampler,
+        model,
+        train_loader,
+        val_loader,
+        criterion,
+        optimizer,
+        num_epochs,
+        device,
+        train_sampler,
 ):
     train_losses = []
     val_losses = []
@@ -133,7 +133,7 @@ def train_model(
     save_path = "./resNet34.pth"
 
     for epoch in tqdm(range(num_epochs)):
-        train_sampler.set_epoch(epoch)
+        # train_sampler.set_epoch(epoch)
         # 训练阶段
         model.train()
         running_loss = 0.0
@@ -225,9 +225,8 @@ def train_model(
 
         if val_acc > best_acc:
             best_acc = val_acc
-            if dist.get_rank() == 0:
-                print("最佳模型已更新，保存中...")
-                torch.save(model.module.state_dict(), "aug1_new_resnet50_ddp.pth")
+            print("最佳模型已更新，保存中...")
+            torch.save(model.state_dict(), "aug1_new_resnet50_ddp.pth")
                 # torch.save(model.state_dict(), save_path)
         # elif val_recall > best_recall:
         #     best_recall = val_recall
@@ -236,7 +235,7 @@ def train_model(
         #         torch.save(model.module.state_dict(), "new_resnet50_ddp.pth")
         #         # torch.save(model.state_dict(), save_path)
 
-        if dist.get_rank() == 0:
+
             print(f"Epoch [{epoch}/{num_epochs}]")
             print(f"Epoch [{epoch + 1}/{num_epochs}]")
             print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
@@ -325,15 +324,15 @@ def unfreeze_all(net):
 
 
 def run_one_stage(
-    model,
-    train_loader,
-    val_loader,
-    criterion,
-    optimizer,
-    num_epochs,
-    device,
-    train_sampler,
-    stage_name="",
+        model,
+        train_loader,
+        val_loader,
+        criterion,
+        optimizer,
+        num_epochs,
+        device,
+        train_sampler,
+        stage_name="",
 ):
     best_acc = 0.0
     for epoch in range(num_epochs):
@@ -373,20 +372,20 @@ def run_one_stage(
 
         if val_acc > best_acc:
             best_acc = val_acc
-            if dist.get_rank() == 0:
-                print("最佳模型已更新，保存中...")
-                torch.save(
+            # if dist.get_rank() == 0:
+            print("最佳模型已更新，保存中...")
+            torch.save(
                     model.module.state_dict(), stage_name + "new_resnet50_ddp.pth"
                 )
                 # torch.save(model.state_dict(), save_path)
-        if dist.get_rank() == 0:
-            print(f"Epoch [{epoch}/{num_epochs}]")
-            print(f"Epoch [{epoch + 1}/{num_epochs}]")
-            print(f"Train Loss: {running_loss:.4f}, Train Acc: {train_acc:.2f}%")
-            print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
-            print("-" * 50)
-        if dist.get_rank() == 0:
-            print(
+        # if dist.get_rank() == 0:
+        print(f"Epoch [{epoch}/{num_epochs}]")
+        print(f"Epoch [{epoch + 1}/{num_epochs}]")
+        print(f"Train Loss: {running_loss:.4f}, Train Acc: {train_acc:.2f}%")
+        print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+        print("-" * 50)
+        # if dist.get_rank() == 0:
+        print(
                 f"[{stage_name}] Epoch {epoch+1}/{num_epochs} "
                 f"Train Acc {train_acc:.2f}% | Val Acc {val_acc:.2f}%"
             )
@@ -555,7 +554,7 @@ class VaricoseNet(nn.Module):
         super().__init__()
         self.backbone = backbone            # DINO ViT
         # print(backbone)
-        
+
         # self.backbone = resnet34()
         # state = torch.load("./resnet34-pre.pth", map_location="cpu", weights_only=True)
         # self.backbone.load_state_dict(state, strict=False)
@@ -573,41 +572,47 @@ class VaricoseNet(nn.Module):
 
         embed_dim = 768
 
-        # self.se_module = SEBlock(embed_dim * 2) 
+        # self.se_module = SEBlock(embed_dim * 2)
 
-        self.norm = nn.LayerNorm(embed_dim * 2) 
-        
+        self.norm = nn.LayerNorm(embed_dim * 2)
+
         self.classifier = nn.Sequential(
-            nn.Linear(embed_dim *2, 256)  ,   # 先降维，减少参数
-            nn.BatchNorm1d(256),
+            nn.Conv2d(1, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Dropout(p=0.7),                  # 0.5效果好
-            nn.Linear(256, 5)
-            # CosineLinear(256, num_classes, s=15)
+
+            nn.Conv2d(256, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Dropout(p=0.7),
+
+            # 还原为“通道压缩”
+            nn.Conv2d(128, 5, kernel_size=1)
         )
 
     def forward(self, x):
-
         features = self.backbone.get_intermediate_layers(x, n=1)[0]
-        
-        cls_token = features[:, 0]              # [B, 768]
-        patch_tokens = features[:, 1:]          # [B, N, 768]
 
-        # 2. 全局平均池化 (GAP)
+        cls_token = features[:, 0]          # [B, 768]
+        patch_tokens = features[:, 1:]      # [B, N, 768]
+
         gap = torch.mean(patch_tokens, dim=1)   # [B, 768]
 
-        # 3. 拼接 CLS 和 GAP
-        combined = torch.cat([cls_token, gap], dim=1) # [B, 1536]
-
-        # 4. 分类
+        combined = torch.cat([cls_token, gap], dim=1)  # [B, 1536]
         combined = self.norm(combined)
 
+        B = combined.size(0)
 
+    # 👉 reshape 成 2D
+        combined = combined.view(B, 1, 48, 32)        # [B, 1, 48, 32]
 
-        # features = self.backbone(x)
+        out = self.classifier(combined)               # [B, 5, 48, 32]
 
-        out = self.classifier(combined)
+    # 👉 全局池化，得到类别 logits
+        out = out.mean(dim=(2, 3))                    # [B, 5]
+
         return out
+
 
 device = torch.device("cuda")
 
@@ -615,14 +620,14 @@ device = torch.device("cuda")
 
 def main():
     set_seed(42,deterministic=True)
-    train_data_dir = "/home/zengwanxin/openworld/vvdata/aug1/"
+    train_data_dir = "/home/zengwanxin/openworld/vvdata/aug1/" #远程7为aug2 cuda7
     val_data_dir = "./output/val"
     batch_size = 16
     num_epochs = 200
     learning_rate = 0.0001
 
-    local_rank = setup_ddp()
-    device = torch.device(f"cuda:{local_rank}")
+    # local_rank = setup_ddp()
+    # device = torch.device(f"cuda:{local_rank}")
 
     # device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     print(f"使用设备: {device}")
@@ -660,49 +665,46 @@ def main():
     train_dataset = ImageDataset(train_image_paths, train_labels, transform_train)
     val_dataset = ImageDataset(val_image_paths, val_labels, transform_val)
 
-    train_sampler = DistributedSampler(train_dataset, shuffle=True)
-    val_sampler = DistributedSampler(val_dataset, shuffle=False)
+    # train_sampler = DistributedSampler(train_dataset, shuffle=True)
+    # val_sampler = DistributedSampler(val_dataset, shuffle=False)
+
+    train_sampler = None
+    val_sampler = None
+
+    # train_loader = DataLoader(
+    #     train_dataset,
+    #     batch_size=8,
+    #     sampler=train_sampler,
+    #     num_workers=4,
+    #     pin_memory=True,
+    #     drop_last=True
+    # )
+    #
+    # val_loader = DataLoader(
+    #     val_dataset, batch_size=1, sampler=val_sampler, num_workers=4, pin_memory=True
+    # )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=8,
-        sampler=train_sampler,
+        batch_size=8,  # 原版为8 远程改为16  远程2为32   远程3为64 远程4为128
+        shuffle=True,
         num_workers=4,
         pin_memory=True,
         drop_last=True
     )
 
     val_loader = DataLoader(
-        val_dataset, batch_size=1, sampler=val_sampler, num_workers=4, pin_memory=True
+        val_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
     )
-    # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    # val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    # net = resnet34(use_cbam=False)
-    # model_weight_path = "./resnet34-pre.pth"
-    # state = torch.load(model_weight_path, map_location="cpu")
-    # net.load_state_dict(state, strict=False)
-    # net.load_state_dict(
-    #     torch.load(model_weight_path, map_location="cpu", weights_only=True)
-    # )
-    # in_channel = net.fc.in_features
-
-    # dropout_prob = (
-    #     0.3  # 这是一个常用的强度，如果依然过拟合可以设为 0.5，如果欠拟合设为 0.3
-    # )
-    # net.fc = nn.Sequential(
-    #     nn.Dropout(p=dropout_prob), nn.Linear(in_channel, len(train_class_names))
-    # )
-
-    # net.fc = ClassifierWithSE(
-    #     in_channel=in_channel,
-    #     num_classes=len(train_class_names),
-    #     dropout_prob=dropout_prob,
-    # )
     net = torch.hub.load("facebookresearch/dino:main", "dino_vitb16")
     model = VaricoseNet(net, num_classes=6)
     model = model.to(device)
-    model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
+    # model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
     print(model)
 
     # loss_function = FocalLoss(
@@ -718,7 +720,7 @@ def main():
     base_optimizer = torch.optim.AdamW
     # optimizer = SAM(params, base_optimizer, rho=0.05, lr=1e-4, weight_decay=5e-4)
 
-    optimizer = optim.Adam(params, lr=0.001, weight_decay=1e-4)
+    optimizer = optim.Adam(params, lr=0.001, weight_decay=1e-4) #远程修改学习率为0.0001
 
 
     # 训练模型
